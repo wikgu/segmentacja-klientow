@@ -4,6 +4,9 @@ Każda reguła czyszcząca jest osobną funkcją, która nie modyfikuje przekaza
 i zwraca parę ``(nowa_ramka, wpis_dziennika)``. Funkcja :func:`wyczysc_dane` składa
 reguły w potok i zwraca dziennik decyzji z liczbą obserwacji, których dotyczyła
 każda operacja.
+
+W pandas 3 (tryb Copy-on-Write) wynik filtrowania i ``assign`` jest niezależny od ramki
+wejściowej, więc reguły nie muszą dodatkowo kopiować danych – to ogranicza zużycie pamięci.
 """
 
 from __future__ import annotations
@@ -140,7 +143,7 @@ def _wpis(krok: str, dzialanie: str, uzasadnienie: str, przed: pd.DataFrame, po:
 
 def usun_duplikaty(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Usuwa pełne duplikaty wierszy (zostawia pierwsze wystąpienie)."""
-    wynik = df.drop_duplicates(keep="first").copy()
+    wynik = df.drop_duplicates(keep="first")
     return wynik, _wpis(
         "pełne duplikaty",
         "usunięcie",
@@ -152,7 +155,7 @@ def usun_duplikaty(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 def usun_brak_klienta(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Usuwa wiersze bez identyfikatora klienta."""
-    wynik = df[df["CustomerID"].notna()].copy()
+    wynik = df[df["CustomerID"].notna()]
     return wynik, _wpis(
         "brak CustomerID",
         "usunięcie",
@@ -165,7 +168,7 @@ def usun_brak_klienta(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 def usun_ujemne_ilosci_poza_anulowaniami(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Usuwa pozycje z ilością <= 0, które nie pochodzą z faktur anulujących (korekty magazynowe)."""
     maska = (df["Quantity"] <= 0) & ~czy_anulowanie(df)
-    wynik = df[~maska].copy()
+    wynik = df[~maska]
     return wynik, _wpis(
         "ilość <= 0 poza fakturami C",
         "usunięcie",
@@ -177,7 +180,7 @@ def usun_ujemne_ilosci_poza_anulowaniami(df: pd.DataFrame) -> tuple[pd.DataFrame
 
 def usun_niedodatnie_ceny(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Usuwa pozycje z ceną jednostkową <= 0."""
-    wynik = df[df["UnitPrice"] > 0].copy()
+    wynik = df[df["UnitPrice"] > 0]
     return wynik, _wpis(
         "cena <= 0",
         "usunięcie",
@@ -190,7 +193,7 @@ def usun_niedodatnie_ceny(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 def usun_pozycje_nietowarowe(df: pd.DataFrame, kody: dict | set | None = None) -> tuple[pd.DataFrame, dict]:
     """Usuwa pozycje o kodach nietowarowych (opłaty, wysyłka, rabaty, korekty ręczne)."""
     maska = czy_pozycja_nietowarowa(df, kody)
-    wynik = df[~maska].copy()
+    wynik = df[~maska]
     return wynik, _wpis(
         "pozycje nietowarowe",
         "usunięcie",
@@ -202,8 +205,7 @@ def usun_pozycje_nietowarowe(df: pd.DataFrame, kody: dict | set | None = None) -
 
 def oznacz_anulowania(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Dodaje kolumnę ``Anulowanie`` (faktura z prefiksem 'C'); niczego nie usuwa."""
-    wynik = df.copy()
-    wynik["Anulowanie"] = czy_anulowanie(wynik)
+    wynik = df.assign(Anulowanie=czy_anulowanie(df))
     return wynik, _wpis(
         "oznaczenie anulowań",
         "oznaczenie",
@@ -216,8 +218,7 @@ def oznacz_anulowania(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 def dodaj_wartosc(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Dodaje kolumnę ``Wartosc`` = Quantity * UnitPrice (ujemna dla anulowań)."""
-    wynik = df.copy()
-    wynik["Wartosc"] = wynik["Quantity"] * wynik["UnitPrice"]
+    wynik = df.assign(Wartosc=df["Quantity"] * df["UnitPrice"])
     return wynik, _wpis(
         "wartość pozycji",
         "nowa kolumna",
