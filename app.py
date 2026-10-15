@@ -15,13 +15,33 @@ from analiza.cechy import (
     kontrola_agregacji,
     odfiltruj_klientow,
     przeksztalc_cechy,
+    przygotuj_macierz_cech,
     zbuduj_rfm,
+)
+from analiza.segmentacja import (
+    N_INIT,
+    NAZWY_SEGMENTOW,
+    RANDOM_STATE,
+    WYBRANE_K,
+    ZAKRES_K,
+    dodatkowy_profil,
+    opisz_segmenty,
+    porownaj_k,
+    profiluj_segmenty,
+    rzut_pca,
+    segmentuj,
 )
 from analiza.wczytanie import URL_OPISU, opis_zbioru, slownik_kolumn, wczytaj_dane
 
 st.set_page_config(page_title="Segmentacja klientów K-means", layout="wide")
 
-SEKCJE = ["Opis danych", "Jakość danych", "Analiza eksploracyjna"]
+WARIANTY_CECH = {
+    "log1p dla Frequency i Monetary (przyjęty w analizie)": CECHY_LOG,
+    "log1p dla Recency, Frequency i Monetary": True,
+    "bez transformacji": False,
+}
+DOMYSLNY_WARIANT = next(iter(WARIANTY_CECH))
+SEKCJE = ["Opis danych", "Jakość danych", "Analiza eksploracyjna", "Segmentacja K-means"]
 
 
 # --------------------------------------------------------------------------- obliczenia (z pamięcią podręczną)
@@ -75,6 +95,18 @@ def wykresy_eda() -> dict:
     }
 
 
+@st.cache_data(show_spinner="Porównywanie wartości k…")
+def porownanie_k(wariant: str) -> pd.DataFrame:
+    X, _ = przygotuj_macierz_cech(przygotuj_dane()["klienci"], log=WARIANTY_CECH[wariant])
+    return porownaj_k(X, k_values=ZAKRES_K)
+
+
+@st.cache_data(show_spinner="Dopasowywanie K-means…")
+def segmentacja(k: int, wariant: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    wynik = segmentuj(przygotuj_dane()["klienci"], k, log=WARIANTY_CECH[wariant])
+    return wynik.klienci, wynik.X
+
+
 # --------------------------------------------------------------------------- pomocnicze elementy widoku
 
 
@@ -93,6 +125,13 @@ def raport_do_wyswietlenia(raport: pd.DataFrame) -> pd.DataFrame:
         kolumna: raport[kolumna].map(lambda v: "" if v is None or pd.isna(v) else str(v))
         for kolumna in ["min", "max"]
     })
+
+
+def nazwy_segmentow(k: int, wariant: str) -> dict:
+    """Nazwy z analizy dotyczą k = 4 i przyjętego przygotowania cech; w innych ustawieniach – numery."""
+    if k == WYBRANE_K and wariant == DOMYSLNY_WARIANT:
+        return NAZWY_SEGMENTOW
+    return {s: f"Segment {s}" for s in range(k)}
 
 
 # --------------------------------------------------------------------------- sekcje
@@ -221,17 +260,76 @@ def sekcja_eda(d: dict) -> None:
         )
 
 
+def sekcja_segmentacja(d: dict, k: int, wariant: str) -> None:
+    st.header(f"Segmentacja K-means (k = {k})")
+    st.caption(f"Przygotowanie cech: {wariant}; standaryzacja StandardScaler dopasowana do "
+               f"{liczba(len(d['klienci']))} klientów; KMeans(n_init={N_INIT}, random_state={RANDOM_STATE}).")
+    if k != WYBRANE_K or wariant != DOMYSLNY_WARIANT:
+        st.info(f"W analizie przyjęto k = {WYBRANE_K} i {DOMYSLNY_WARIANT.split(' (')[0]}. "
+                "Nazwy segmentów dotyczą tego wariantu – przy innych ustawieniach segmenty są numerowane "
+                "od najwyższej mediany Monetary i opisane automatycznie.")
+
+    porownanie = porownanie_k(wariant)
+    klienci, X = segmentacja(k, wariant)
+    nazwy = nazwy_segmentow(k, wariant)
+
+    st.subheader("Porównanie liczby klastrów")
+    lewa, prawa = st.columns([3, 2])
+    with lewa:
+        st.pyplot(wykresy.wykres_wyboru_k(porownanie, wybrane_k=k))
+    with prawa:
+        tabela(porownanie[["inertia", "silhouette", "davies_bouldin", "najmniejszy_klaster"]], precyzja=3)
+        st.caption("Inercja zawsze maleje z k – liczy się miejsce „łokcia”. Silhouette (im więcej, tym lepiej) "
+                   "i Davies–Bouldin (im mniej, tym lepiej) nie mierzą użyteczności biznesowej segmentów.")
+
+    wiersz = porownanie.loc[k]
+    kolumny = st.columns(3)
+    kolumny[0].metric("Silhouette", liczba(wiersz["silhouette"], 3))
+    kolumny[1].metric("Inercja", liczba(wiersz["inertia"], 0))
+    kolumny[2].metric("Najmniejszy segment", f"{int(wiersz['najmniejszy_klaster'])} klientów")
+
+    st.subheader("Profile segmentów (oryginalne jednostki)")
+    profil = profiluj_segmenty(klienci)
+    profil.insert(0, "nazwa", profil.index.map(nazwy))
+    profil["opis"] = opisz_segmenty(klienci)
+    tabela(profil)
+    dodatkowe = dodatkowy_profil(klienci, d["data_ref"])
+    dodatkowe.insert(0, "nazwa", dodatkowe.index.map(nazwy))
+    with st.expander("Cechy pomocnicze segmentów (nieużywane w K-means)"):
+        tabela(dodatkowe, precyzja=1)
+        st.caption("Staż – dni od pierwszego zakupu do daty odniesienia; nowi – pierwszy zakup w ostatnich "
+                   "90 dniach; koszyk – Monetary / Frequency.")
+
+    lewa, prawa = st.columns(2)
+    with lewa:
+        st.pyplot(wykresy.wykres_profili(X, klienci["Segment"], nazwy))
+        st.caption("Średnie standaryzowanych cech: ile odchyleń standardowych segment leży od średniej klientów.")
+    with prawa:
+        rzut, wariancja = rzut_pca(X, klienci["Segment"])
+        st.pyplot(wykresy.wykres_pca(rzut, wariancja, nazwy))
+        st.caption(f"Rzut PCA zachowuje {wariancja.sum():.0%} wariancji cech. To tylko wizualizacja – nie jest "
+                   "dowodem separacji segmentów w pełnej przestrzeni cech.")
+    st.pyplot(wykresy.wykres_segmentow(klienci, nazwy=nazwy))
+
+
 # --------------------------------------------------------------------------- układ aplikacji
 
 
 with st.sidebar:
     st.title("Segmentacja klientów")
     sekcja = st.radio("Sekcja", SEKCJE)
+    st.divider()
+    k = st.slider("Liczba segmentów k", min_value=min(ZAKRES_K), max_value=max(ZAKRES_K), value=WYBRANE_K)
+    wariant = st.selectbox("Przygotowanie cech", list(WARIANTY_CECH),
+                           help="Sposób ograniczenia wpływu wartości skrajnych przed standaryzacją.")
+    st.caption(f"W analizie wybrano k = {WYBRANE_K} – uzasadnienie w README i w notebooku.")
 
 dane_aplikacji = przygotuj_dane()
 if sekcja == SEKCJE[0]:
     sekcja_opis(dane_aplikacji)
 elif sekcja == SEKCJE[1]:
     sekcja_jakosc(dane_aplikacji)
-else:
+elif sekcja == SEKCJE[2]:
     sekcja_eda(dane_aplikacji)
+else:
+    sekcja_segmentacja(dane_aplikacji, k, wariant)
