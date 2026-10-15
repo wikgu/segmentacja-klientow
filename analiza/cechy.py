@@ -74,3 +74,20 @@ def kontrola_agregacji(df: pd.DataFrame, rfm: pd.DataFrame) -> pd.Series:
         },
         name="wartość",
     )
+
+
+def odfiltruj_klientow(rfm: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Wyłącza z segmentacji klientów bez zakupu netto (Frequency = 0 lub Monetary <= 0)."""
+    maska = (rfm["Frequency"] > 0) & (rfm["Monetary"] > 0)
+    wynik = rfm[maska].copy()
+    wynik["Recency"] = wynik["Recency"].astype(int)
+    wpis = {
+        "krok": "klienci bez zakupu netto",
+        "dzialanie": "wyłączenie z segmentacji",
+        "uzasadnienie": "Klienci, których anulowania równoważą lub przewyższają zakupy (albo mają tylko "
+                        "anulowania), nie mają dodatniej wartości zakupów do opisania.",
+        "wiersze_przed": len(rfm),
+        "wiersze_po": len(wynik),
+        "liczba_obserwacji": int((~maska).sum()),
+    }
+    return wynik, wpis
