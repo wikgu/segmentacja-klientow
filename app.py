@@ -4,6 +4,8 @@ Wszystkie obliczenia pochodzą z pakietu ``analiza`` – z tych samych funkcji k
 notebook z analizą i testy. Uruchomienie: ``streamlit run app.py``.
 """
 
+import gc
+
 import pandas as pd
 import streamlit as st
 
@@ -53,38 +55,57 @@ def przygotuj_dane() -> dict:
     """Wczytanie, czyszczenie i agregacja do poziomu klienta – raz na proces aplikacji.
 
     Zwracane ramki są tylko do odczytu (funkcje z pakietu ``analiza`` nie modyfikują wejścia).
-    Surowe dane nie są przechowywane – zostają z nich tylko zestawienia potrzebne w aplikacji.
+    Z danych transakcyjnych zostają tylko zestawienia potrzebne w aplikacji, a same transakcje
+    są zwalniane, żeby aplikacja mieściła się w niewielkiej pamięci (np. darmowy plan Render: 512 MB).
     """
     surowe = wczytaj_dane()
-    dane, dziennik = czyszczenie.wyczysc_dane(surowe)
-    klienci_wszyscy = zbuduj_rfm(dane)
-    klienci, wpis_klienci = odfiltruj_klientow(klienci_wszyscy)
-    return {
+    wynik = {
         "opis": opis_zbioru(surowe),
         "slownik": slownik_kolumn(surowe),
         "podglad": surowe.head(10),
         "raport_przed": czyszczenie.raport_jakosci(surowe),
-        "raport_po": czyszczenie.raport_jakosci(dane),
-        "przed_po": czyszczenie.porownanie_przed_po(surowe, dane),
-        "dziennik": pd.concat([dziennik, pd.DataFrame([wpis_klienci])], ignore_index=True),
-        "dane": dane,
-        "klienci_wszyscy": klienci_wszyscy,
-        "klienci": klienci,
-        "data_ref": data_odniesienia(dane),
     }
+    problemy_przed = czyszczenie.podsumowanie_problemow(surowe)
+    dane, dziennik = czyszczenie.wyczysc_dane(surowe)
+    del surowe
+    gc.collect()
+
+    klienci_wszyscy = zbuduj_rfm(dane)
+    klienci, wpis_klienci = odfiltruj_klientow(klienci_wszyscy)
+    sprzedaz = dane[~dane["Anulowanie"]]
+    wynik.update(
+        {
+            "raport_po": czyszczenie.raport_jakosci(dane),
+            "przed_po": pd.concat(
+                [problemy_przed.rename("przed"), czyszczenie.podsumowanie_problemow(dane).rename("po")], axis=1
+            ),
+            "dziennik": pd.concat([dziennik, pd.DataFrame([wpis_klienci])], ignore_index=True),
+            "kontrola_agregacji": kontrola_agregacji(dane, klienci_wszyscy),
+            "skrajne_transakcje": czyszczenie.wartosci_skrajne(sprzedaz, ["Quantity", "UnitPrice", "Wartosc"]),
+            "statystyki_transakcji": eda.statystyki_opisowe(sprzedaz, ["Quantity", "UnitPrice", "Wartosc"]),
+            "miesiace": eda.sprzedaz_miesieczna(dane),
+            "kraje": eda.sprzedaz_wg_kraju(dane, n=11),
+            "tydzien": eda.aktywnosc_tygodniowa(dane),
+            "liczba_pozycji": len(dane),
+            "sprzedaz_netto": float(dane["Wartosc"].sum()),
+            "data_ref": data_odniesienia(dane),
+            "klienci": klienci,
+        }
+    )
+    return wynik
 
 
 @st.cache_resource(show_spinner="Przygotowanie wykresów EDA…")
 def wykresy_eda() -> dict:
     """Wykresy analizy eksploracyjnej (nie zależą od ustawień w panelu bocznym)."""
     d = przygotuj_dane()
-    dane, klienci = d["dane"], d["klienci"]
+    klienci = d["klienci"]
     return {
         "miesiace": wykresy.wykres_sprzedazy_miesiecznej(
-            eda.sprzedaz_miesieczna(dane), uwaga="Grudzień 2011 obejmuje tylko 9 dni (dane kończą się 09.12.2011)."
+            d["miesiace"], uwaga="Grudzień 2011 obejmuje tylko 9 dni (dane kończą się 09.12.2011)."
         ),
-        "kraje": wykresy.wykres_krajow(eda.sprzedaz_wg_kraju(dane, n=11)),
-        "tydzien": wykresy.wykres_aktywnosci_tygodniowej(eda.aktywnosc_tygodniowa(dane)),
+        "kraje": wykresy.wykres_krajow(d["kraje"]),
+        "tydzien": wykresy.wykres_aktywnosci_tygodniowej(d["tydzien"]),
         "rozklady": wykresy.wykres_rozkladow(klienci, tytul="Rozkłady cech klientów w skali oryginalnej"),
         "rozklady_log": wykresy.wykres_rozkladow(
             przeksztalc_cechy(klienci), tytul="Rozkłady cech po przekształceniu (log1p dla F i M)", log=CECHY_LOG
@@ -149,7 +170,7 @@ sklepu internetowego z upominkami, w którym wielu klientów to hurtownicy. Jede
 pozycja faktury; w segmentacji jednostką analizy jest **klient** (cechy RFM: Recency, Frequency, Monetary).
 """
     )
-    opis, klienci, dane = d["opis"], d["klienci"], d["dane"]
+    opis, klienci = d["opis"], d["klienci"]
     st.subheader("Dane surowe")
     kolumny = st.columns(5)
     kolumny[0].metric("Pozycje faktur", liczba(opis["liczba_wierszy"]))
@@ -162,8 +183,8 @@ pozycja faktury; w segmentacji jednostką analizy jest **klient** (cechy RFM: Re
     )
     st.subheader("Po czyszczeniu")
     kolumny = st.columns(4)
-    kolumny[0].metric("Pozycje faktur", liczba(len(dane)))
-    kolumny[1].metric("Sprzedaż netto [GBP]", liczba(dane["Wartosc"].sum()))
+    kolumny[0].metric("Pozycje faktur", liczba(d["liczba_pozycji"]))
+    kolumny[1].metric("Sprzedaż netto [GBP]", liczba(d["sprzedaz_netto"]))
     kolumny[2].metric("Klienci w segmentacji", liczba(len(klienci)))
     kolumny[3].metric("Data odniesienia (Recency)", f"{d['data_ref']:%d.%m.%Y}")
     st.subheader("Kolumny zbioru")
@@ -196,12 +217,12 @@ duże zamówienia; ich wpływ ogranicza transformacja logarytmiczna cech.
     lewa, prawa = st.columns(2)
     lewa.markdown("**Pozycje faktur sprzedażowych**")
     with lewa:
-        tabela(czyszczenie.wartosci_skrajne(d["dane"][~d["dane"]["Anulowanie"]], ["Quantity", "UnitPrice", "Wartosc"]))
+        tabela(d["skrajne_transakcje"])
     prawa.markdown("**Cechy klientów**")
     with prawa:
         tabela(czyszczenie.wartosci_skrajne(d["klienci"], CECHY_RFM))
     st.subheader("Kontrola agregacji do poziomu klienta")
-    tabela(kontrola_agregacji(d["dane"], d["klienci_wszyscy"]).to_frame())
+    tabela(d["kontrola_agregacji"].to_frame())
     st.caption("Suma Monetary jest równa wartości netto transakcji, a suma Frequency – liczbie faktur "
                "sprzedażowych, więc żadna pozycja nie została policzona podwójnie.")
 
@@ -209,10 +230,10 @@ duże zamówienia; ich wpływ ogranicza transformacja logarytmiczna cech.
 def sekcja_eda(d: dict) -> None:
     st.header("Analiza eksploracyjna")
     fig = wykresy_eda()
-    dane, klienci = d["dane"], d["klienci"]
+    klienci = d["klienci"]
 
     st.subheader("Transakcje")
-    tabela(eda.statystyki_opisowe(dane[~dane["Anulowanie"]], ["Quantity", "UnitPrice", "Wartosc"]))
+    tabela(d["statystyki_transakcji"])
     st.caption("Statystyki pozycji faktur sprzedażowych. Średnie są wyraźnie wyższe od median – rozkłady są "
                "silnie prawostronnie skośne (obok wielu drobnych zakupów są pojedyncze duże zamówienia hurtowe).")
     st.pyplot(fig["miesiace"])
