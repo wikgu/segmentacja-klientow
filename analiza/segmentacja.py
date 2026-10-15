@@ -6,8 +6,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.metrics import davies_bouldin_score, silhouette_score
+from sklearn.metrics import adjusted_rand_score, davies_bouldin_score, silhouette_score
 
+from analiza.cechy import przygotuj_macierz_cech
 
 RANDOM_STATE = 42
 N_INIT = 10
@@ -49,3 +50,46 @@ def porownaj_k(
             }
         )
     return pd.DataFrame(wiersze).set_index("k")
+
+
+def stabilnosc_k(
+    X,
+    k_values=ZAKRES_K,
+    liczba_prob: int = 20,
+    n_init: int = N_INIT,
+    random_state: int = RANDOM_STATE,
+) -> pd.DataFrame:
+    """Stabilność podziału: średni skorygowany indeks Randa (ARI) między podziałem
+    z pełnych danych a podziałami z modeli dopasowanych do prób bootstrapowych."""
+    X = np.asarray(X)
+    rng = np.random.default_rng(random_state)
+    proby = [rng.integers(0, len(X), size=len(X)) for _ in range(liczba_prob)]
+    wiersze = []
+    for k in k_values:
+        bazowe = dopasuj_kmeans(X, k, n_init=n_init, random_state=random_state).labels_
+        ari = [
+            adjusted_rand_score(
+                bazowe, dopasuj_kmeans(X[idx], k, n_init=n_init, random_state=random_state).predict(X)
+            )
+            for idx in proby
+        ]
+        wiersze.append({"k": k, "ari_srednie": float(np.mean(ari)), "ari_min": float(np.min(ari))})
+    return pd.DataFrame(wiersze).set_index("k")
+
+
+def porownaj_warianty(
+    rfm: pd.DataFrame,
+    warianty: dict,
+    k_values=ZAKRES_K,
+    n_init: int = N_INIT,
+    random_state: int = RANDOM_STATE,
+) -> pd.DataFrame:
+    """Porównanie k dla różnych sposobów przygotowania cech (wrażliwość wyniku na transformację).
+
+    ``warianty`` to słownik ``nazwa -> argumenty przygotuj_macierz_cech`` (np. ``{"log": False}``).
+    """
+    wyniki = {}
+    for nazwa, opcje in warianty.items():
+        X, _ = przygotuj_macierz_cech(rfm, **opcje)
+        wyniki[nazwa] = porownaj_k(X, k_values, n_init=n_init, random_state=random_state)
+    return pd.concat(wyniki, names=["wariant"])
