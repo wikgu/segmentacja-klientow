@@ -32,6 +32,18 @@ KOLUMNY = [
     "Country",
 ]
 
+OPIS_KOLUMN = {
+    "InvoiceNo": "Numer faktury (6 cyfr); prefiks 'C' oznacza fakturę anulującą (korektę)",
+    "StockCode": "Kod produktu (5 cyfr, czasem z literą); kody specjalne, np. POST, M, D, oznaczają pozycje nietowarowe",
+    "Description": "Nazwa produktu",
+    "Quantity": "Liczba sztuk w pozycji faktury; wartości ujemne to anulowania, zwroty i korekty",
+    "InvoiceDate": "Data i godzina wystawienia faktury",
+    "UnitPrice": "Cena jednostkowa w funtach szterlingach (GBP)",
+    "CustomerID": "Pięciocyfrowy identyfikator klienta",
+    "Country": "Kraj zamieszkania klienta",
+}
+
+
 def pobierz_dane(katalog: Path = KATALOG_SUROWYCH, url: str = URL_DANYCH) -> Path:
     """Pobiera archiwum z UCI i rozpakowuje plik XLSX, jeżeli nie ma go jeszcze na dysku.
 
@@ -93,3 +105,33 @@ def wczytaj_dane(katalog: Path = KATALOG_SUROWYCH, pobierz: bool = True) -> pd.D
     df = ujednolic_typy(surowe)
     df.to_parquet(sciezka_cache, index=False)
     return df
+
+
+def opis_zbioru(df: pd.DataFrame) -> dict:
+    """Zwraca podstawowe wskaźniki opisujące zbiór transakcji."""
+    return {
+        "liczba_wierszy": len(df),
+        "liczba_kolumn": df.shape[1],
+        "data_od": df["InvoiceDate"].min(),
+        "data_do": df["InvoiceDate"].max(),
+        "liczba_faktur": df["InvoiceNo"].nunique(),
+        "liczba_klientow": df["CustomerID"].nunique(),
+        "liczba_produktow": df["StockCode"].nunique(),
+        "liczba_krajow": df["Country"].nunique(),
+    }
+
+
+def slownik_kolumn(df: pd.DataFrame) -> pd.DataFrame:
+    """Tabela z typem, przykładową wartością i znaczeniem każdej kolumny."""
+    wiersze = []
+    for kolumna in df.columns:
+        niepuste = df[kolumna].dropna()
+        wiersze.append(
+            {
+                "kolumna": kolumna,
+                "typ": str(df[kolumna].dtype),
+                "przyklad": str(niepuste.iloc[0]) if len(niepuste) else "",
+                "znaczenie": OPIS_KOLUMN.get(kolumna, ""),
+            }
+        )
+    return pd.DataFrame(wiersze)
