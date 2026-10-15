@@ -82,6 +82,18 @@ def ujednolic_typy(df: pd.DataFrame) -> pd.DataFrame:
     return wynik
 
 
+def ma_docelowe_typy(df: pd.DataFrame) -> bool:
+    """Sprawdza, czy ramka ma już kolumny i typy nadawane przez :func:`ujednolic_typy`."""
+    return (
+        list(df.columns) == KOLUMNY
+        and all(pd.api.types.is_string_dtype(df[k]) for k in ["InvoiceNo", "StockCode", "Description", "Country"])
+        and pd.api.types.is_datetime64_any_dtype(df["InvoiceDate"])
+        and str(df["CustomerID"].dtype) == "Int64"
+        and df["Quantity"].dtype == "int64"
+        and df["UnitPrice"].dtype == "float64"
+    )
+
+
 def wczytaj_xlsx(katalog: Path = KATALOG_SUROWYCH, pobierz: bool = True) -> pd.DataFrame:
     """Wczytuje oryginalny plik XLSX z UCI (w razie potrzeby najpierw go pobiera)."""
     sciezka_xlsx = Path(katalog) / NAZWA_PLIKU_XLSX
@@ -102,7 +114,9 @@ def wczytaj_dane(sciezka_parquet: Path = SCIEZKA_PARQUET, katalog_surowych: Path
     """
     sciezka_parquet = Path(sciezka_parquet)
     if sciezka_parquet.exists():
-        return ujednolic_typy(pd.read_parquet(sciezka_parquet))
+        df = pd.read_parquet(sciezka_parquet)
+        # Kopia zapisana przez tę funkcję ma już właściwe typy – ponowna konwersja tylko zajmowałaby pamięć.
+        return df if ma_docelowe_typy(df) else ujednolic_typy(df)
     df = wczytaj_xlsx(katalog_surowych, pobierz=pobierz)
     sciezka_parquet.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(sciezka_parquet, index=False)
