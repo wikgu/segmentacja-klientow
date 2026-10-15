@@ -118,3 +118,111 @@ def wartosci_skrajne(df: pd.DataFrame, kolumny=("Quantity", "UnitPrice"), mnozni
             }
         )
     return pd.DataFrame(wiersze).set_index("cecha")
+
+
+# --------------------------------------------------------------------------- reguły czyszczenia
+
+
+def _wpis(krok: str, dzialanie: str, uzasadnienie: str, przed: pd.DataFrame, po: pd.DataFrame,
+          liczba_obserwacji: int | None = None) -> dict:
+    """Pojedynczy wpis dziennika decyzji; domyślnie liczba obserwacji = liczba usuniętych wierszy."""
+    if liczba_obserwacji is None:
+        liczba_obserwacji = len(przed) - len(po)
+    return {
+        "krok": krok,
+        "dzialanie": dzialanie,
+        "uzasadnienie": uzasadnienie,
+        "wiersze_przed": len(przed),
+        "wiersze_po": len(po),
+        "liczba_obserwacji": int(liczba_obserwacji),
+    }
+
+
+def usun_duplikaty(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Usuwa pełne duplikaty wierszy (zostawia pierwsze wystąpienie)."""
+    wynik = df.drop_duplicates(keep="first").copy()
+    return wynik, _wpis(
+        "pełne duplikaty",
+        "usunięcie",
+        "Identyczna faktura, produkt, ilość, cena i czas co do minuty – traktujemy jako podwójny zapis tej samej pozycji.",
+        df,
+        wynik,
+    )
+
+
+def usun_brak_klienta(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Usuwa wiersze bez identyfikatora klienta."""
+    wynik = df[df["CustomerID"].notna()].copy()
+    return wynik, _wpis(
+        "brak CustomerID",
+        "usunięcie",
+        "Bez identyfikatora nie da się przypisać transakcji do klienta, a jednostką analizy jest klient.",
+        df,
+        wynik,
+    )
+
+
+def usun_ujemne_ilosci_poza_anulowaniami(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Usuwa pozycje z ilością <= 0, które nie pochodzą z faktur anulujących (korekty magazynowe)."""
+    maska = (df["Quantity"] <= 0) & ~czy_anulowanie(df)
+    wynik = df[~maska].copy()
+    return wynik, _wpis(
+        "ilość <= 0 poza fakturami C",
+        "usunięcie",
+        "Ujemne ilości bez faktury anulującej to korekty stanów magazynowych (np. uszkodzenia), a nie zachowanie klienta.",
+        df,
+        wynik,
+    )
+
+
+def usun_niedodatnie_ceny(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Usuwa pozycje z ceną jednostkową <= 0."""
+    wynik = df[df["UnitPrice"] > 0].copy()
+    return wynik, _wpis(
+        "cena <= 0",
+        "usunięcie",
+        "Pozycje bez dodatniej ceny (gratisy, korekty długu) nie wnoszą wartości zakupu i zawyżałyby liczbę zamówień.",
+        df,
+        wynik,
+    )
+
+
+def usun_pozycje_nietowarowe(df: pd.DataFrame, kody: dict | set | None = None) -> tuple[pd.DataFrame, dict]:
+    """Usuwa pozycje o kodach nietowarowych (opłaty, wysyłka, rabaty, korekty ręczne)."""
+    maska = czy_pozycja_nietowarowa(df, kody)
+    wynik = df[~maska].copy()
+    return wynik, _wpis(
+        "pozycje nietowarowe",
+        "usunięcie",
+        "Opłaty pocztowe, bankowe, rabaty i korekty ręczne nie opisują zakupów produktów; korekty ręczne mają skrajne kwoty.",
+        df,
+        wynik,
+    )
+
+
+def oznacz_anulowania(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Dodaje kolumnę ``Anulowanie`` (faktura z prefiksem 'C'); niczego nie usuwa."""
+    wynik = df.copy()
+    wynik["Anulowanie"] = czy_anulowanie(wynik)
+    return wynik, _wpis(
+        "oznaczenie anulowań",
+        "oznaczenie",
+        "Anulowania i zwroty zostają w danych: pomniejszają wartość zakupów klienta (Monetary netto), ale nie są liczone jako zamówienia.",
+        df,
+        wynik,
+        liczba_obserwacji=int(wynik["Anulowanie"].sum()),
+    )
+
+
+def dodaj_wartosc(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Dodaje kolumnę ``Wartosc`` = Quantity * UnitPrice (ujemna dla anulowań)."""
+    wynik = df.copy()
+    wynik["Wartosc"] = wynik["Quantity"] * wynik["UnitPrice"]
+    return wynik, _wpis(
+        "wartość pozycji",
+        "nowa kolumna",
+        "Wartość pozycji w GBP potrzebna do wyznaczenia Monetary.",
+        df,
+        wynik,
+        liczba_obserwacji=len(wynik),
+    )
