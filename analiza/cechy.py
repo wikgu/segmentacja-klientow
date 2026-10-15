@@ -7,13 +7,19 @@ Definicje cech (jeden wiersz = jeden klient):
 * **Frequency** – liczba unikalnych faktur sprzedażowych (bez faktur anulujących),
   więc kilka pozycji na jednej fakturze to jedno zamówienie,
 * **Monetary** – łączna wartość zakupów netto w GBP: sprzedaż pomniejszona o anulowania i zwroty.
+
+Przed segmentacją Frequency i Monetary są logarytmowane (``log1p``), bo mają bardzo silną
+prawostronną skośność; Recency zostaje w dniach. Następnie wszystkie cechy są standaryzowane.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 CECHY_RFM = ["Recency", "Frequency", "Monetary"]
+CECHY_LOG = ("Frequency", "Monetary")
 
 
 def data_odniesienia(df: pd.DataFrame) -> pd.Timestamp:
@@ -91,3 +97,47 @@ def odfiltruj_klientow(rfm: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "liczba_obserwacji": int((~maska).sum()),
     }
     return wynik, wpis
+
+
+def przeksztalc_cechy(
+    rfm: pd.DataFrame,
+    cechy=CECHY_RFM,
+    log: bool | tuple | list = CECHY_LOG,
+    winsoryzacja: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    """Zwraca kopię wybranych cech po opcjonalnym obcięciu kwantylowym i transformacji log1p.
+
+    ``log`` to lista cech do zlogarytmowania (``True`` – wszystkie, ``False`` – żadna).
+    ``winsoryzacja`` to para kwantyli, np. ``(0.01, 0.99)``; wartości spoza przedziału
+    są przycinane do granic, a nie usuwane. Żadna obserwacja nie jest usuwana.
+    """
+    X = rfm.loc[:, list(cechy)].astype(float).copy()
+    if winsoryzacja is not None:
+        dolny, gorny = winsoryzacja
+        X = X.clip(lower=X.quantile(dolny), upper=X.quantile(gorny), axis=1)
+    do_log = list(cechy) if log is True else (list(log) if log else [])
+    for cecha in do_log:
+        if cecha in X.columns:
+            X[cecha] = np.log1p(X[cecha])
+    return X
+
+
+def skaluj_cechy(X: pd.DataFrame) -> tuple[pd.DataFrame, StandardScaler]:
+    """Standaryzuje cechy (średnia 0, odchylenie 1); skaler jest dopasowany tylko do ``X``.
+
+    K-means liczy odległości euklidesowe, więc bez skalowania o podziale decydowałaby cecha
+    o największym zakresie liczbowym (np. Recency w dniach), a nie wszystkie cechy po równo.
+    """
+    skaler = StandardScaler()
+    wartosci = skaler.fit_transform(X)
+    return pd.DataFrame(wartosci, index=X.index, columns=X.columns), skaler
+
+
+def przygotuj_macierz_cech(
+    rfm: pd.DataFrame,
+    cechy=CECHY_RFM,
+    log: bool | tuple | list = CECHY_LOG,
+    winsoryzacja: tuple[float, float] | None = None,
+) -> tuple[pd.DataFrame, StandardScaler]:
+    """Przekształca i skaluje cechy klientów przeznaczonych do segmentacji."""
+    return skaluj_cechy(przeksztalc_cechy(rfm, cechy=cechy, log=log, winsoryzacja=winsoryzacja))
