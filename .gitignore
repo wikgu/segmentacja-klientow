@@ -1,8 +1,23 @@
+# Środowisko Pythona
 .venv/
+venv/
 __pycache__/
+*.py[cod]
+*.egg-info/
 .pytest_cache/
+.ipynb_checkpoints/
+
+# Dane surowe (pobierane skryptem z UCI, nie trzymamy ich w repozytorium)
 data/raw/
 *.xlsx
-.ipynb_checkpoints/
-.streamlit/secrets.toml
+*.zip
+
+# Sekrety i konfiguracja lokalna
 .env
+.streamlit/secrets.toml
+
+# Pliki edytorów i systemu
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
