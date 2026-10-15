@@ -18,8 +18,10 @@ URL_OPISU = "https://archive.ics.uci.edu/dataset/352/online+retail"
 
 KATALOG_PROJEKTU = Path(__file__).resolve().parent.parent
 KATALOG_SUROWYCH = KATALOG_PROJEKTU / "data" / "raw"
+# Kopia zbioru w formacie Parquet trzymana w repozytorium (licencja CC BY 4.0 pozwala ją udostępniać);
+# dzięki niej aplikacja nie musi przy starcie pobierać i parsować pliku XLSX.
+SCIEZKA_PARQUET = KATALOG_PROJEKTU / "data" / "online_retail.parquet"
 NAZWA_PLIKU_XLSX = "Online Retail.xlsx"
-NAZWA_PLIKU_CACHE = "online_retail.parquet"
 
 KOLUMNY = [
     "InvoiceNo",
@@ -80,30 +82,30 @@ def ujednolic_typy(df: pd.DataFrame) -> pd.DataFrame:
     return wynik
 
 
-def wczytaj_dane(katalog: Path = KATALOG_SUROWYCH, pobierz: bool = True) -> pd.DataFrame:
-    """Wczytuje surowe transakcje Online Retail.
-
-    Przy pierwszym wywołaniu czyta plik XLSX (w razie potrzeby pobierając go z UCI)
-    i zapisuje kopię w formacie Parquet; kolejne wywołania czytają już tylko tę kopię.
-    """
-    katalog = Path(katalog)
-    sciezka_cache = katalog / NAZWA_PLIKU_CACHE
-    if sciezka_cache.exists():
-        return ujednolic_typy(pd.read_parquet(sciezka_cache))
-
-    sciezka_xlsx = katalog / NAZWA_PLIKU_XLSX
+def wczytaj_xlsx(katalog: Path = KATALOG_SUROWYCH, pobierz: bool = True) -> pd.DataFrame:
+    """Wczytuje oryginalny plik XLSX z UCI (w razie potrzeby najpierw go pobiera)."""
+    sciezka_xlsx = Path(katalog) / NAZWA_PLIKU_XLSX
     if not sciezka_xlsx.exists():
         if not pobierz:
             raise FileNotFoundError(f"Brak pliku {sciezka_xlsx}; uruchom pobierz_dane().")
         sciezka_xlsx = pobierz_dane(katalog)
+    surowe = pd.read_excel(sciezka_xlsx, engine="calamine", dtype={"InvoiceNo": str, "StockCode": str})
+    return ujednolic_typy(surowe)
 
-    surowe = pd.read_excel(
-        sciezka_xlsx,
-        engine="calamine",
-        dtype={"InvoiceNo": str, "StockCode": str},
-    )
-    df = ujednolic_typy(surowe)
-    df.to_parquet(sciezka_cache, index=False)
+
+def wczytaj_dane(sciezka_parquet: Path = SCIEZKA_PARQUET, katalog_surowych: Path = KATALOG_SUROWYCH,
+                 pobierz: bool = True) -> pd.DataFrame:
+    """Wczytuje surowe transakcje Online Retail.
+
+    Czyta kopię Parquet z katalogu ``data/``; jeżeli jej nie ma, odtwarza ją z oryginalnego
+    pliku XLSX (pobieranego z UCI), więc wynik da się w pełni odtworzyć ze źródła.
+    """
+    sciezka_parquet = Path(sciezka_parquet)
+    if sciezka_parquet.exists():
+        return ujednolic_typy(pd.read_parquet(sciezka_parquet))
+    df = wczytaj_xlsx(katalog_surowych, pobierz=pobierz)
+    sciezka_parquet.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(sciezka_parquet, index=False)
     return df
 
 
