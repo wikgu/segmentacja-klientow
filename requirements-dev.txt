@@ -1,0 +1,5 @@
+# Dodatkowe pakiety do uruchamiania notebooka z analizą (niepotrzebne w aplikacji)
+-r requirements.txt
+ipykernel==7.4.0
+nbformat==5.11.1
+nbconvert==7.17.2
