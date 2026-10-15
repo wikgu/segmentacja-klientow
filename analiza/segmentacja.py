@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn import config_context
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import adjusted_rand_score, davies_bouldin_score, silhouette_score
@@ -16,6 +17,7 @@ from analiza.cechy import CECHY_LOG, CECHY_RFM, przygotuj_macierz_cech
 RANDOM_STATE = 42
 N_INIT = 10
 ZAKRES_K = range(2, 9)
+PAMIEC_ROBOCZA_MB = 64
 
 WYBRANE_K = 4
 # Nazwy nadane po analizie profili dla k = 4 przy domyślnym przygotowaniu cech
@@ -61,13 +63,15 @@ def porownaj_k(
         model = dopasuj_kmeans(X, k, n_init=n_init, random_state=random_state)
         etykiety = model.labels_
         licznosci = np.bincount(etykiety, minlength=k)
+        # Odległości między wszystkimi parami klientów liczone są w porcjach ograniczonych
+        # do PAMIEC_ROBOCZA_MB (domyślnie scikit-learn rezerwuje na to do 1 GB).
+        with config_context(working_memory=PAMIEC_ROBOCZA_MB):
+            silhouette = silhouette_score(X, etykiety, sample_size=proba_silhouette, random_state=random_state)
         wiersze.append(
             {
                 "k": k,
                 "inertia": model.inertia_,
-                "silhouette": silhouette_score(
-                    X, etykiety, sample_size=proba_silhouette, random_state=random_state
-                ),
+                "silhouette": silhouette,
                 "davies_bouldin": davies_bouldin_score(X, etykiety),
                 "najmniejszy_klaster": int(licznosci.min()),
                 "najmniejszy_klaster_proc": 100 * licznosci.min() / len(etykiety),
