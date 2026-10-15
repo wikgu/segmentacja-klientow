@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
+from analiza.cechy import CECHY_RFM
 
 DNI_TYGODNIA = ["pon", "wt", "śr", "czw", "pt", "sob", "nd"]
 
@@ -87,3 +89,26 @@ def udzial_anulowan(df: pd.DataFrame) -> pd.Series:
             "klienci_z_anulowaniem_proc": 100 * df.loc[anul, "CustomerID"].nunique() / df["CustomerID"].nunique(),
         }
     ).round(2)
+
+
+def koncentracja_wartosci(rfm: pd.DataFrame, kolumna: str = "Monetary") -> pd.DataFrame:
+    """Krzywa koncentracji: jaki odsetek wartości generuje dany odsetek najlepszych klientów."""
+    wartosci = np.sort(rfm[kolumna].clip(lower=0).to_numpy())[::-1]
+    skumulowane = np.cumsum(wartosci) / wartosci.sum()
+    return pd.DataFrame(
+        {
+            "odsetek_klientow": np.arange(1, len(wartosci) + 1) / len(wartosci),
+            "odsetek_wartosci": skumulowane,
+        }
+    )
+
+
+def udzial_najlepszych(rfm: pd.DataFrame, odsetek: float = 0.2, kolumna: str = "Monetary") -> float:
+    """Udział w łącznej wartości ``odsetek`` klientów o najwyższej wartości cechy."""
+    krzywa = koncentracja_wartosci(rfm, kolumna)
+    return float(np.interp(odsetek, krzywa["odsetek_klientow"], krzywa["odsetek_wartosci"]))
+
+
+def korelacje(rfm: pd.DataFrame, cechy=CECHY_RFM, metoda: str = "spearman") -> pd.DataFrame:
+    """Macierz korelacji cech klientów (domyślnie Spearmana – odporna na skośność)."""
+    return rfm.loc[:, list(cechy)].corr(method=metoda)
