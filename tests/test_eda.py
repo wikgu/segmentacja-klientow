@@ -5,11 +5,14 @@ import pytest
 
 from analiza.eda import (
     aktywnosc_tygodniowa,
+    koncentracja_wartosci,
+    korelacje,
     podsumowanie_faktur,
     sprzedaz_miesieczna,
     sprzedaz_wg_kraju,
     statystyki_opisowe,
     udzial_anulowan,
+    udzial_najlepszych,
 )
 
 
@@ -76,3 +79,29 @@ def test_udzial_anulowan(czyste):
     udzial = udzial_anulowan(czyste)
     assert udzial["faktury_proc"] == 25.0
     assert udzial["wartosc_proc"] == pytest.approx(100 * 5 / 50)  # 5 GBP anulowań wobec 50 GBP sprzedaży
+
+
+@pytest.fixture
+def klienci():
+    return pd.DataFrame(
+        {
+            "Recency": [5, 40, 120, 300],
+            "Frequency": [10, 4, 2, 1],
+            "Monetary": [100.0, 50.0, 30.0, 20.0],
+        },
+        index=pd.Index([11, 12, 13, 14], name="CustomerID"),
+    )
+
+
+def test_koncentracja_wartosci_od_najcenniejszych(klienci):
+    krzywa = koncentracja_wartosci(klienci)
+    assert krzywa["odsetek_wartosci"].tolist() == pytest.approx([0.5, 0.75, 0.9, 1.0])
+    assert krzywa["odsetek_klientow"].iloc[-1] == 1.0
+    assert udzial_najlepszych(klienci, 0.25) == pytest.approx(0.5)  # najlepszy z czterech klientów
+
+
+def test_korelacje_spearmana(klienci):
+    macierz = korelacje(klienci)
+    assert macierz.loc["Frequency", "Monetary"] == pytest.approx(1.0)  # ten sam porządek klientów
+    assert macierz.loc["Recency", "Frequency"] == pytest.approx(-1.0)
+    assert (macierz.to_numpy() == macierz.to_numpy().T).all()
