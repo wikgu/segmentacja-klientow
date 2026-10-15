@@ -30,6 +30,7 @@ from analiza.segmentacja import (
     profiluj_segmenty,
     rzut_pca,
     segmentuj,
+    tabela_do_eksportu,
 )
 from analiza.wczytanie import URL_OPISU, opis_zbioru, slownik_kolumn, wczytaj_dane
 
@@ -41,7 +42,7 @@ WARIANTY_CECH = {
     "bez transformacji": False,
 }
 DOMYSLNY_WARIANT = next(iter(WARIANTY_CECH))
-SEKCJE = ["Opis danych", "Jakość danych", "Analiza eksploracyjna", "Segmentacja K-means"]
+SEKCJE = ["Opis danych", "Jakość danych", "Analiza eksploracyjna", "Segmentacja K-means", "Eksport wyników"]
 
 
 # --------------------------------------------------------------------------- obliczenia (z pamięcią podręczną)
@@ -312,6 +313,26 @@ def sekcja_segmentacja(d: dict, k: int, wariant: str) -> None:
     st.pyplot(wykresy.wykres_segmentow(klienci, nazwy=nazwy))
 
 
+def sekcja_eksport(k: int, wariant: str) -> None:
+    st.header("Eksport tabeli klientów z segmentem")
+    klienci, _ = segmentacja(k, wariant)
+    nazwy = nazwy_segmentow(k, wariant)
+    eksport = tabela_do_eksportu(klienci, nazwy)
+    wybrane = st.multiselect("Segmenty", options=list(nazwy), default=list(nazwy), format_func=nazwy.get)
+    widok = eksport[eksport["Segment"].isin(wybrane)]
+    st.caption(f"{liczba(len(widok))} klientów; k = {k}, przygotowanie cech: {wariant}.")
+    st.download_button(
+        "Pobierz CSV",
+        data=widok.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"klienci_segmenty_k{k}.csv",
+        mime="text/csv",
+        type="primary",
+    )
+    st.dataframe(widok.head(500), hide_index=True)
+    if len(widok) > 500:
+        st.caption("Podgląd pokazuje pierwszych 500 klientów; plik CSV zawiera wszystkich wybranych.")
+
+
 # --------------------------------------------------------------------------- układ aplikacji
 
 
@@ -331,5 +352,7 @@ elif sekcja == SEKCJE[1]:
     sekcja_jakosc(dane_aplikacji)
 elif sekcja == SEKCJE[2]:
     sekcja_eda(dane_aplikacji)
-else:
+elif sekcja == SEKCJE[3]:
     sekcja_segmentacja(dane_aplikacji, k, wariant)
+else:
+    sekcja_eksport(k, wariant)
