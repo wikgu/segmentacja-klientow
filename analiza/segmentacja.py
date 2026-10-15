@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, davies_bouldin_score, silhouette_score
+from sklearn.preprocessing import StandardScaler
 
-from analiza.cechy import przygotuj_macierz_cech
+from analiza.cechy import CECHY_LOG, CECHY_RFM, przygotuj_macierz_cech
 
 RANDOM_STATE = 42
 N_INIT = 10
 ZAKRES_K = range(2, 9)
+
+
+@dataclass
+class WynikSegmentacji:
+    """Wynik pełnego potoku segmentacji dla jednej wartości k."""
+
+    klienci: pd.DataFrame
+    X: pd.DataFrame
+    model: KMeans
+    skaler: StandardScaler
+    k: int
 
 
 def dopasuj_kmeans(X, k: int, n_init: int = N_INIT, random_state: int = RANDOM_STATE) -> KMeans:
@@ -93,3 +106,30 @@ def porownaj_warianty(
         X, _ = przygotuj_macierz_cech(rfm, **opcje)
         wyniki[nazwa] = porownaj_k(X, k_values, n_init=n_init, random_state=random_state)
     return pd.concat(wyniki, names=["wariant"])
+
+
+def uporzadkuj_etykiety(etykiety, wartosci) -> np.ndarray:
+    """Numeruje klastry od 0 w kolejności malejącej mediany ``wartosci`` (np. Monetary).
+
+    Numery z K-means są arbitralne; stała kolejność ułatwia porównywanie wyników.
+    """
+    mediany = pd.Series(np.asarray(wartosci)).groupby(np.asarray(etykiety)).median()
+    mapa = {stara: nowa for nowa, stara in enumerate(mediany.sort_values(ascending=False).index)}
+    return np.array([mapa[e] for e in np.asarray(etykiety)])
+
+
+def segmentuj(
+    rfm: pd.DataFrame,
+    k: int,
+    cechy=CECHY_RFM,
+    log=CECHY_LOG,
+    winsoryzacja=None,
+    n_init: int = N_INIT,
+    random_state: int = RANDOM_STATE,
+) -> WynikSegmentacji:
+    """Pełny potok: przekształcenie cech, skalowanie, K-means i przypisanie segmentu klientom."""
+    X, skaler = przygotuj_macierz_cech(rfm, cechy=cechy, log=log, winsoryzacja=winsoryzacja)
+    model = dopasuj_kmeans(X, k, n_init=n_init, random_state=random_state)
+    klienci = rfm.copy()
+    klienci["Segment"] = uporzadkuj_etykiety(model.labels_, rfm["Monetary"])
+    return WynikSegmentacji(klienci=klienci, X=X, model=model, skaler=skaler, k=k)
