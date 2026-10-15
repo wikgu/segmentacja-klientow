@@ -6,4 +6,5 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     healthCheckPath: /_stcore/health
-    autoDeploy: true
+    # nowa wersja trafia na Render dopiero, gdy testy w GitHub Actions zakończą się sukcesem
+    autoDeployTrigger: checksPass
