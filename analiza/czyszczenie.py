@@ -226,3 +226,27 @@ def dodaj_wartosc(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         wynik,
         liczba_obserwacji=len(wynik),
     )
+
+
+# --------------------------------------------------------------------------- potok czyszczenia
+
+
+KROKI_CZYSZCZENIA = (
+    usun_duplikaty,
+    usun_brak_klienta,
+    usun_ujemne_ilosci_poza_anulowaniami,
+    usun_niedodatnie_ceny,
+    usun_pozycje_nietowarowe,
+    oznacz_anulowania,
+    dodaj_wartosc,
+)
+
+
+def wyczysc_dane(df: pd.DataFrame, kroki=KROKI_CZYSZCZENIA) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Uruchamia kolejne reguły czyszczenia i zwraca dane po czyszczeniu oraz dziennik decyzji."""
+    wynik = df
+    dziennik = []
+    for krok in kroki:
+        wynik, wpis = krok(wynik)
+        dziennik.append(wpis)
+    return wynik.reset_index(drop=True), pd.DataFrame(dziennik)
